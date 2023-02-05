@@ -6,6 +6,7 @@ use std::fmt;
 use std::fmt::Debug;
 use uuid::Uuid;
 use plotters::prelude::*;
+use plotters::style::full_palette::PURPLE;
 
 type GoodUid = usize;
 type Price = f64;
@@ -75,132 +76,6 @@ trait EcoEntity {
     fn post_orders_to_markets(&mut self, markets: &mut [Box<dyn Market>]);
     // Step 5
     fn retrieve_orders_from_markets(&mut self, markets: &mut [Box<dyn Market>]);
-}
-
-#[derive(Debug)]
-struct StaticConsumptionTarget {
-    good_uid: GoodUid,
-    quantity: u64,
-    target_quantity: u64,
-    money_balance: f64,
-    prestige: f64,
-    consumption_rate: u64,
-    orders_uuid: Vec<Uuid>,
-}
-
-impl fmt::Display for StaticConsumptionTarget {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("StaticConsumptionTarget")
-            .field("quantity", &self.quantity)
-            .field("money_balance", &self.money_balance)
-            .field("consumption_rate", &self.consumption_rate)
-            .finish()
-    }
-}
-
-impl EcoEntity for StaticConsumptionTarget {
-    fn produce_and_consume(&mut self) -> f64 {
-        self.quantity -= self.consumption_rate;
-        0.
-    }
-
-    fn get_required_markets(&self) -> (Vec<GoodUid>, Vec<MarketMetadata>) {
-        let goods = vec![self.good_uid];
-        let metadata = vec![
-            "ita".to_owned()
-        ];
-        (goods, metadata)
-    }
-
-    fn post_orders_to_markets(&mut self, markets: &mut [Box<dyn Market>]) {
-        if self.quantity > self.target_quantity {
-            return;
-        }
-        let required = self.target_quantity - self.quantity;
-        let market = markets.first_mut().unwrap();
-        let uuid = market.register_order(OrderType::Buy, required, self.prestige);
-        self.orders_uuid.push(uuid);
-    }
-
-    fn retrieve_orders_from_markets(&mut self, markets: &mut [Box<dyn Market>]) {
-        for uuid in self.orders_uuid.iter() {
-            let result = markets.first_mut().unwrap().retrieve_order_result(uuid).unwrap();
-            match result.ordertype {
-                OrderType::Buy => {
-                    self.quantity += result.traded_quantity;
-                    self.money_balance -= result.total_cost;
-                }
-                OrderType::Sell => {
-                    self.quantity -= result.traded_quantity;
-                    self.money_balance += result.total_cost;
-                }
-            }
-        }
-        self.orders_uuid.clear();
-    }
-}
-
-#[derive(Debug)]
-struct StaticProductionTarget {
-    good_uid: GoodUid,
-    quantity: u64,
-    target_quantity: u64,
-    money_balance: f64,
-    prestige: f64,
-    production_rate: u64,
-    orders_uuid: Vec<Uuid>,
-}
-
-impl fmt::Display for StaticProductionTarget {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("StaticProductionTarget")
-            .field("quantity", &self.quantity)
-            .field("money_balance", &self.money_balance)
-            .field("production_rate", &self.production_rate)
-            .finish()
-    }
-}
-
-impl EcoEntity for StaticProductionTarget {
-    fn produce_and_consume(&mut self) -> f64 {
-        self.quantity += self.production_rate;
-        0.
-    }
-
-    fn get_required_markets(&self) -> (Vec<GoodUid>, Vec<MarketMetadata>) {
-        let goods = vec![self.good_uid];
-        let metadata = vec![
-            "ita".to_owned()
-        ];
-        (goods, metadata)
-    }
-
-    fn post_orders_to_markets(&mut self, markets: &mut [Box<dyn Market>]) {
-        if self.quantity < self.target_quantity {
-            return;
-        }
-        let required = self.quantity - self.target_quantity;
-        let market = markets.first_mut().unwrap();
-        let uuid = market.register_order(OrderType::Sell, required, self.prestige);
-        self.orders_uuid.push(uuid);
-    }
-
-    fn retrieve_orders_from_markets(&mut self, markets: &mut [Box<dyn Market>]) {
-        for uuid in self.orders_uuid.iter() {
-            let result = markets.first_mut().unwrap().retrieve_order_result(uuid).unwrap();
-            match result.ordertype {
-                OrderType::Buy => {
-                    self.quantity += result.traded_quantity;
-                    self.money_balance -= result.total_cost;
-                }
-                OrderType::Sell => {
-                    self.quantity -= result.traded_quantity;
-                    self.money_balance += result.total_cost;
-                }
-            }
-        }
-        self.orders_uuid.clear();
-    }
 }
 
 struct RGOSingle {
@@ -789,6 +664,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         rgo_money.push(rgo.money_balance);
         factory_money.push(factory.money_balance);
         pop_money.push(pop.money_balance);
+        rgo_g0.push(rgo.quantity);
+        factory_g0.push(factory.input_quantity);
+        factory_g1.push(factory.output_quantity);
+        pop_g0.push(pop.goods_inventory[&0]);
+        pop_g1.push(pop.goods_inventory[&1]);
         // Sleep
         // sleep(Duration::from_millis(500));
         // Step 1 - Resolve production and consumption of Economic Entities
@@ -820,7 +700,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     // Plots
     // Money Plot
-    let root = BitMapBackend::new("out.png", (800, 600)).into_drawing_area();
+    let root = BitMapBackend::new("out_money.png", (800, 600)).into_drawing_area();
     root.fill(&WHITE)?;
     let max = rgo_money.iter().max_by(|a, b| a.total_cmp(b)).unwrap()
         .max(*factory_money.iter().max_by(|a, b| a.total_cmp(b)).unwrap())
@@ -857,96 +737,59 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .border_style(BLACK)
         .draw()?;
     root.present()?;
-    Ok(())
-}
-
-#[allow(dead_code)]
-fn main_2() -> Result<(), Box<dyn std::error::Error>> {
-    let mut producer = StaticProductionTarget {
-        good_uid: 0,
-        quantity: 12000,
-        target_quantity: 10000,
-        money_balance: 500_000.0,
-        prestige: 5.0,
-        production_rate: 500,
-        orders_uuid: vec![],
-    };
-    let mut consumer = StaticConsumptionTarget {
-        good_uid: 0,
-        quantity: 5000,
-        target_quantity: 10000,
-        money_balance: 0.0,
-        prestige: 5.0,
-        consumption_rate: 400,
-        orders_uuid: vec![],
-    };
-    let mut markets: Vec<Box<dyn Market>> = vec![
-        Box::new(TestMarket {
-            good_uid: 0,
-            price_per_unit: 10.0,
-            buy_orders: vec![],
-            sell_orders: vec![],
-        })];
-    println!("producer debug: {:?}", &producer);
-    println!("consumer debug: {:?}", &consumer);
-    println!("market debug: {:?}", &markets[0]);
-    // Data to plot
-    let mut prod_inv = Vec::<u64>::new();
-    let mut cons_inv = Vec::<u64>::new();
-    for _ in 0..20 {
-        println!("{}\n{}\nmarket price: {}", &producer, &consumer, &markets[0].price_per_unit());
-        // Register
-        prod_inv.push(producer.quantity);
-        cons_inv.push(consumer.quantity);
-        // Sleep
-        //sleep(Duration::from_millis(500));
-        // Step 1 - Resolve production and consumption of Economic Entities
-        producer.produce_and_consume();
-        consumer.produce_and_consume();
-        // Step 2 - Get requested goods and custom zone metadata to choose what market expose to entities
-        //   For now we ignore this but still call the function.
-        producer.get_required_markets();
-        consumer.get_required_markets();
-        // Step 3 - Tell the entities to register their orders to the markets
-        producer.post_orders_to_markets(&mut markets[..]);
-        consumer.post_orders_to_markets(&mut markets[..]);
-        // Step 4 - Run the trade algo in the markets
-        for market in markets.iter_mut() {
-            let traded = market.run_trade().unwrap();
-            println!("traded: {traded}");
-        }
-        // Step 5 - Tell the entities to retrieve the results of the trade
-        producer.retrieve_orders_from_markets(&mut markets[..]);
-        consumer.retrieve_orders_from_markets(&mut markets[..]);
-        // Step 6 - Clear the market internal status
-        for market in markets.iter_mut() {
-            market.clear_state();
-        }
-    }
-    // Plot
-    let root = BitMapBackend::new("out.png", (800, 600)).into_drawing_area();
+    // Goods inventory plot
+    let root = BitMapBackend::new("out_inventory.png", (800, 600)).into_drawing_area();
     root.fill(&WHITE)?;
+    let max = *rgo_g0.iter().max().unwrap()
+        .max(factory_g0.iter().max().unwrap())
+        .max(factory_g1.iter().max().unwrap())
+        .max(pop_g0.iter().max().unwrap())
+        .max(pop_g1.iter().max().unwrap());
     let mut chart = ChartBuilder::on(&root)
         .margin(5)
-        .caption("Quantity in inventory", ("sans-serif", 40).into_font())
+        .caption("Goods Inventory", ("sans-serif", 20).into_font())
         .set_left_and_bottom_label_area_size(40)
-        .build_cartesian_2d(-0f32..20f32, -0f32..20000f32)?;
+        .build_cartesian_2d(0.0_f64..20.0, 0.0_f64..max as f64)?;
     chart.configure_mesh().draw()?;
     chart
         .draw_series(LineSeries::new(
-            (0..20).zip(prod_inv.iter()).map(|(x, y)| (x as f32, *y as f32)),
-            &RED,
+            (0..20).map(|x| x as f64).zip(rgo_g0.into_iter().map(|x| x as f64)),
+            ShapeStyle::from(RED).stroke_width(2),
         ))?
-        .label("Producer")
+        .label("RGO Good 0")
         .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED));
     chart
         .draw_series(LineSeries::new(
-            (0..20).zip(cons_inv.iter()).map(|(x, y)| (x as f32, *y as f32)),
-            &GREEN,
+            (0..20).map(|x| x as f64).zip(factory_g0.into_iter().map(|x| x as f64)),
+            ShapeStyle::from(YELLOW).stroke_width(2),
         ))?
-        .label("Consumer")
+        .label("Factory Good 0")
+        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], YELLOW));
+    chart
+        .draw_series(LineSeries::new(
+            (0..20).map(|x| x as f64).zip(factory_g1.into_iter().map(|x| x as f64)),
+            ShapeStyle::from(BLUE).stroke_width(2),
+        ))?
+        .label("Factory Good 1")
+        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], BLUE));
+    chart
+        .draw_series(LineSeries::new(
+            (0..20).map(|x| x as f64).zip(pop_g0.into_iter().map(|x| x as f64)),
+            ShapeStyle::from(PURPLE).stroke_width(2),
+        ))?
+        .label("Pop Good 0")
+        .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], PURPLE));
+    chart
+        .draw_series(LineSeries::new(
+            (0..20).map(|x| x as f64).zip(pop_g1.into_iter().map(|x| x as f64)),
+            ShapeStyle::from(GREEN).stroke_width(2),
+        ))?
+        .label("Pop Good 1")
         .legend(|(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], GREEN));
-    chart.configure_series_labels().position(SeriesLabelPosition::UpperRight).border_style(BLACK).draw()?;
+    chart.configure_series_labels()
+        .position(SeriesLabelPosition::LowerRight)
+        .border_style(BLACK)
+        .draw()?;
     root.present()?;
     Ok(())
 }
